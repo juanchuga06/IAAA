@@ -1,0 +1,4 @@
+peras,3
+bananas,4
+manzanas,10
+sandia,1000
