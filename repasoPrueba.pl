@@ -88,3 +88,63 @@ for(0..20){
     $pi = mx->nd->dot($pi, $transition_matrix);
 }
 printf $pi->aspdl;
+
+
+sub viterbi {
+    my ($obs_seq, $pi_tensor, $trans_matrix, $emiss_matrix) = @_;
+    
+    my $V = $pi_tensor->reshape([-1]); 
+    
+    my @backpointers; 
+    
+    my $o_first = $obs_seq->[0];
+   
+    my $B_col = mx->nd->slice_axis($emiss_matrix, axis=>1, begin=>$o_first, end=>$o_first+1)->reshape([-1]);
+    $V = $V * $B_col; 
+    
+    for my $t (1 .. scalar(@$obs_seq) - 1) {
+        my $o_curr = $obs_seq->[$t];
+            
+        my $V_expanded = mx->nd->expand_dims($V, axis=>1);
+        my $weighted_transitions = $V_expanded * $trans_matrix;
+           
+        my $max_V = mx->nd->max($weighted_transitions, axis=>0);
+        my $ptr   = mx->nd->argmax($weighted_transitions, axis=>0);   
+        
+        push @backpointers, [ $ptr->at(0)->asscalar, $ptr->at(1)->asscalar ];
+           
+        $B_col = mx->nd->slice_axis($emiss_matrix, axis=>1, begin=>$o_curr, end=>$o_curr+1)->reshape([-1]);
+        $V = $max_V * $B_col;
+    }
+    
+    my $best_final_state = mx->nd->argmax($V, axis=>0)->asscalar;
+    my $best_prob = mx->nd->max($V, axis=>0)->asscalar;
+    
+    my @best_path = ($best_final_state);
+    my $current_state = $best_final_state;
+    
+    for (my $t = scalar(@backpointers) - 1; $t >= 0; $t--) {
+        $current_state = $backpointers[$t]->[$current_state];
+        unshift @best_path, $current_state; # unshift inserta al inicio del arreglo
+    }
+    
+    return (\@best_path, $best_prob);
+}
+
+printf "\nPunto 7 (Viterbi):\n";
+
+my @secuencia_observaciones = (0, 2, 0); 
+
+my ($camino_optimo, $probabilidad) = viterbi(
+    \@secuencia_observaciones, 
+    $pi,               
+    $transition_matrix,
+    $emission_matrix   
+);
+
+my %states_lookup = (0 => 'Sunny', 1 => 'Rainy');
+my @camino_texto = map { $states_lookup{$_} } @$camino_optimo;
+
+print "Secuencia observada: walk -> clean -> walk\n";
+print "Camino de estados ocultos mas probable: " . join(" -> ", @camino_texto) . "\n";
+print "Probabilidad del camino: $probabilidad\n";
