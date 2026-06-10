@@ -14,44 +14,22 @@ package Algorithm::Viterbi{
         return bless $self, $class;
     }
 
+    #Las funciones Get originales no se usan porque son las mismas 
+    #dadas para el examen, es decir, 
+    #estan hechas para arreglos y no para tensores
     sub get_start_probs{
-        my ($self, $training_data, $start_probs) = @_;
-    
-        return $self->{start} if defined $self->{start};
+        my ($self) = @_;
+        return $self->{start};
     }
 
     sub get_emission{
-        my ($self, $observation, $state) = @_;
-
-        my $e = 0;
-        if (defined($self->{emissions}{$observation})){
-            if (defined($self->{emissions}{$observation}{$state})){
-                $e = $self->{emissions}{$observation}{$state};
-            }
-            else {
-                # observation exists, but not for this hidden state
-                $e = 0;
-            }
-        }
-        else {
-            if (defined($self->{unknown_emission_prob})){
-            $e = $self->{unknown_emission_prob};
-            }
-            else {
-            $e = $self->{start}{$state};
-            }
-        }
-        return $e;
+        my ($self) = @_;
+        return $self->{emissions};
     }
 
     sub get_transition{
-        my ($self, $state, $next_state) = @_;
-    
-        my $t = defined($self->{transitions}{$state}{$next_state}) 
-            ? $self->{transitions}{$state}{$next_state} 
-            : $self->{unknown_transition_prob};
-
-        return $t;
+        my ($self) = @_;
+        return $self->{transitions};
     }
 
     sub set_start{
@@ -72,10 +50,16 @@ package Algorithm::Viterbi{
 
     sub viterbi{
         my ($self, $observations, %args) = (splice(@_, 0, 2), debug=>0, log=>0, @_);
-        my $A = $self->{transitions};
-        my $B = $self->{emissions};
-        my $pi = $self->{start};
+        my $A  = $self->get_transition()->copy();
+        my $B  = $self->get_emission()->copy();
+        my $pi = $self->get_start_probs()->copy();
 
+        if ($args{log}) {
+            my $tiny = 1e-32;
+            $A  = mx->nd->log($A  + $tiny);
+            $B  = mx->nd->log($B  + $tiny);
+            $pi = mx->nd->log($pi + $tiny);
+        }
         
         my $I = $A->len;
         my $N = $observations->len;
@@ -85,17 +69,17 @@ package Algorithm::Viterbi{
 
         my $obs = $observations->slice(0)->asscalar;
         my $b0 =  $B->slice(':', $obs);
-        $D->slice(':',0)->set(($pi * $b0)->expand_dims(axis=>1));
+        $D->slice(':',0)->set(($args{log} ? $pi + $b0: $pi * $b0)->expand_dims(axis=>1));
 
 
         for my $n (1..$N-1){
             $obs = $observations->slice($n)->asscalar;
             my $prev = $D->slice(':', [$n-1, $n]);
-            my $temp = $prev * $A;
+            my $temp = $args{log} ? $prev + $A: $prev * $A;
             my $max_vals = $temp->max(axis=>0);
             my $argmaxes = $temp->argmax(axis=>0);
             my $emit = $B->slice(':',$obs);
-            $D->slice(':', $n)->set(($max_vals * $emit)->expand_dims(axis=>1));
+            $D->slice(':', $n)->set(($args{log} ? $max_vals + $emit: $max_vals * $emit)->expand_dims(axis=>1));
             $E->slice(':', $n-1)->set(($argmaxes)->expand_dims(axis=>1));
         }
 
@@ -103,13 +87,13 @@ package Algorithm::Viterbi{
         $S_opt->slice($N-1)->set($D->slice(':', $N-1)->argmax);
         for my $n (reverse 0 .. $N-2){
             my $next_state = $S_opt->slice($n+1)->asscalar;
-            $S_opt->slice($n)->set( mx->nd->array([$E->at($next_state)->at($n)->asscalar]));
+            $S_opt->slice($n)->set( mx->nd->array([$E->slice($next_state, $n)->asscalar]));
         }
+        
+        $D = mx->nd->exp($D) if $args{log};
 
         return ($S_opt, $D, $E);
-
     }
-
     1;
 }
 
@@ -160,4 +144,7 @@ my $pi = mx->nd->array([4/7, 3/7]);
 $vit->set_start($pi);
 
 my ($S_opt, $D, $E) = $vit->viterbi($O, log=>0, order=>1);
+print_result($O, $S_opt, $D, $E); 
+
+($S_opt, $D, $E) = $vit->viterbi($O, log=>1, order=>1);
 print_result($O, $S_opt, $D, $E);
