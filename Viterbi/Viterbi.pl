@@ -14,23 +14,10 @@ package Algorithm::Viterbi{
         return bless $self, $class;
     }
 
-    #Las funciones Get originales no se usan porque son las mismas 
-    #dadas para el examen, es decir, 
-    #estan hechas para arreglos y no para tensores
-    sub get_start_probs{
-        my ($self) = @_;
-        return $self->{start};
-    }
-
-    sub get_emission{
-        my ($self) = @_;
-        return $self->{emissions};
-    }
-
-    sub get_transition{
-        my ($self) = @_;
-        return $self->{transitions};
-    }
+    sub get_start_probs{ 
+        my ($self, $training_data, $start_probs) = @_; 
+        return $self->{start} if defined $self->{start}; 
+    } 
 
     sub set_start{
         my ($self, $start) = @_;
@@ -50,8 +37,8 @@ package Algorithm::Viterbi{
 
     sub viterbi{
         my ($self, $observations, %args) = (splice(@_, 0, 2), debug=>0, log=>0, @_);
-        my $A  = $self->get_transition()->copy();
-        my $B  = $self->get_emission()->copy();
+        my $A  = $self->{transitions}->copy();
+        my $B  = $self->{emissions}->copy();
         my $pi = $self->get_start_probs()->copy();
 
         if ($args{log}) {
@@ -123,28 +110,23 @@ sub print_result {
 
 # Código de prueba:
 
+sub print_tensors{
+  printf "type: %s shape:%s%s\n", ref($_), dump($_->shape), $_->aspdl for (@_);
+}
+my $vit = new Algorithm::Viterbi(states=>[0, 1], observables=>[10, 11, 12]); 
 
-my $vit = new Algorithm::Viterbi(states=>[0, 1], observables=>[10, 11, 12]);
-
-my $A = mx->nd->array([
-    [0.7, 0.3],
-    [0.4, 0.6],
-]);
-
-my $B = mx->nd->array([
-    [1.0, 0.0, 0.0],
-    [0.2, 0.3, 0.5],
-]);
-
-my $O = mx->nd->array([0, 2, 0]);
-
-$vit->set_transitions($A);
-$vit->set_emissions($B);
-my $pi = mx->nd->array([4/7, 3/7]);
-$vit->set_start($pi);
-
-my ($S_opt, $D, $E) = $vit->viterbi($O, log=>0, order=>1);
-print_result($O, $S_opt, $D, $E); 
-
-($S_opt, $D, $E) = $vit->viterbi($O, log=>1, order=>1);
-print_result($O, $S_opt, $D, $E);
+my $A = mx->nd->array([ 
+    [0.7, 0.3], 
+    [0.4, 0.6], 
+]); 
+my $B = mx->nd->array([ 
+    [1.0, 0.0, 0.0], 
+    [0.2, 0.3, 0.5], 
+]); 
+my $pi = mx->nd->array([4/7, 3/7]); 
+my $O = mx->nd->array([0, 2, 0]); 
+$vit->set_transitions($A); 
+$vit->set_emissions($B); 
+$vit->set_start($pi); 
+my ($S_opt, $D, $E) = $vit->viterbi($O, log=>0, order=>1); 
+print_tensors($O, $S_opt, $D, $E); 
