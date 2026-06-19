@@ -1,98 +1,42 @@
-package sml {
+package sml{
     use strict;
     use warnings;
     use Data::Dump qw(dump);
     use List::Util qw(zip min max sum uniq all any shuffle);
-    use Tie::IxHash;
+    use Tie::IxHash;  
     use AI::MXNet qw(mx);
-    use Chart::Plotly::Plot qw(show_plot);
-    use Chart::Plotly::Trace::Scatter;
-    use Chart::Plotly::Trace::Heatmap;
-    use Encode;
-    use utf8; 
-    binmode(STDOUT, ":utf8"); 
 
-    # Permite registrar funciones como métodos en la clase creada dinámicamente
-    sub add_to_class { 
-        my ($class, $method_name, $code_ref) = @_;
+    sub add_to_class{ #@save
+        # Register functions as methods in created class.
+        my($class, $method_name, $code_ref) = @_;   
         {
+            # We need to use symbolic references.
             no strict 'refs';
             no warnings;
+            # Shove the code reference into the class' symbol table.
             *{$class.'::'.$method_name} = $code_ref;
         }
-    }
-
-
-    # Utilidad para imprimir detalles de los tensores
-    sub print_tensors {
-        my $self = shift;
-        my $tensor = shift; # Completado lógicamente para recibir el tensor como parámetro
-        printf "obj: %s shape: %s\n%s\ndtype:%s\n", 
-            ref($tensor), dump($tensor->shape), $tensor->asstr, $tensor->dtype;
-    }
-
-    # Permite incrustar un gráfico en un notebook de Jupyter
-    sub embedplot {
-        my ($self, $plot, %args) = (splice(@_, 0, 2), width => 800, height => 650, @_);
-        
-        if (`whereis wkhtmltoimage` =~ m/wkhtmltoimage:\s*$/) {
-            print STDERR "wkhtmltoimage is not found in your system. Install wkhtmltoimage first.\n";
-            return;
-        }
-        unless (ref($plot) eq 'Chart::Plotly::Plot') {
-            print STDERR "First parameter plot must be a Chart::Plotly::Plot.\n";
-            return;
-        }
-        
-        # Save to file
-        my $html_path = 'plot.html';
-        open my $fh, '>', $html_path or die "Cannot write plot.html: $!";
-        print $fh $plot->html();
-        close $fh;
-        
-        # Convert HTML to PNG using wkhtmltoimage
-        my $png_path = "plot.png";
-        my $cmd = `wkhtmltoimage --quiet --width $args{width} --height $args{height} $html_path $png_path`;
-        print STDERR "Image generation failed: $cmd" if $cmd;
-        
-        unlink $html_path;
-        
-        # Actually embed the graph into a Jupyter code cell
-        IPerl->png($png_path);
-        return 1;
-    }
+    } 
 
     # Defined in Section 1.2.1 Load CSV File
     # Function for loading a CSV
     # Load a CSV file
-    # Función para cargar un archivo CSV
-    sub load_csv {
-        my ($self, $file_path, %args) = (splice(@_, 0, 2), delimiter => '[,:\t]', asndarray => 0, has_header => 1, @_);
-        
-        open(my $fh, "<", $file_path) or die "Cannot open file $file_path: $!";
-        my $header = <$fh> if $args{has_header};
-        
-        if (defined $header) {
-            $header =~ s/[\r\n]+$//g;
-            my $i = 0;
-            $header = { map { $_ => $i++ } split /$args{delimiter}/, $header };
-            # Ordenar las llaves en función de sus valores numéricos
-            $header = [ sort { $header->{$a} <=> $header->{$b} } keys %$header ];
+    sub load_csv{
+        my ($self, $file_path, %args) = (splice(@_, 0, 2), delimiter => '[,;\t]', @_);
+
+        open (FILE, "<", $file_path) or die "Cannot open file $file_path: $!";
+        my $header = <FILE>;
+        chomp($header);
+        my @dataset = ();
+        while (<FILE>){
+            my $row = $_;
+            $row =~ s/[\r\n]+$//g; # Regular expression that deletes characters such as \r \n
+            next if (!defined $row || $row =~ /^\s*$/);
+            push @dataset, [split /$args{delimiter}/, $row];
         }
-        
-        my $dataset = [];
-        while (<$fh>) {
-            $_ =~ s/[\r\n]+$//g;
-            next if (!defined $_ || $_ =~ /^\s*$/ || $_ =~ /^$args{delimiter}*$/);
-            push @$dataset, [ split /$args{delimiter}/, $_ ];
-        }
-        close $fh;
-        
-        # Decisión de salida: ¿El programador solicitó explícitamente un NDArray?
-        $dataset = mx->nd->array($dataset) if $args{asndarray};
-        
-        # Devolvemos según el contexto
-        return wantarray ? ($dataset, $header) : $dataset;
+        close FILE;
+
+        return wantarray ? (\@dataset, $header) : \@dataset;
     }
 
 
@@ -112,7 +56,7 @@ package sml {
     # Function To Integer Encode String Class Values.
     # Convert string column to integer
     sub str_column_to_int{
-        my ($self, $dataset, $column) = @_;
+        my ($self, $dataset, $column) = @_; 
         my $class_values = [map {$_->[$column]} @$dataset];
         my @unique = uniq @$class_values;
         my %lookup = ();
@@ -122,144 +66,41 @@ package sml {
         for my $row (@$dataset){
             $row->[$column] = $lookup{$row->[$column]};
         }
-        return \%lookup, {reverse(%lookup)};
-        
+
+        return \%lookup;
     }
 
-    # # Función para calcular los valores mínimos y máximos para cada columna de un dataset
-    # sub dataset_minmax {
-    #     my ($self, $dataset) = @_;
-    #     my @minmax;
-        
-    #     my $num_cols = $dataset->shape->[1];
-        
-    #     for my $i (0 .. $num_cols - 1) {
-    #         my $col = $dataset->slice(':', $i);
-    #         my $value_min = mx->nd->min($col)->asscalar;
-    #         my $value_max = mx->nd->max($col)->asscalar;
-    #         push @minmax, [$value_min, $value_max];
-    #     }
-        
-    #     return \@minmax;
-    # }
-
-    # # Rescala las columnas del dataset al rango 0-1 basándose en los mínimos y máximos
-    # sub normalize_dataset {
-    #     my ($self, $X, $minmax) = @_;
-    #     for my $row (@$X) {
-    #         for my $pos (0 .. $#{$row}) {
-    #             # Se restaura la fórmula matemática: scaled = (value - min) / (max - min)
-    #             $row->[$pos] = ($row->[$pos] - $minmax->[$pos][0]) / ($minmax->[$pos][1] - $minmax->[$pos][0]);
-    #         }
-    #     }
-    # }
-
-    # sub column_means{
-    #     my ($self, $dataset) = @_;
-    #     my $means = [0, map {$_} 0 .. $#{$dataset->[0]} -1];
-    #     for my $i (0 .. $#{$dataset->[0]}){
-    #         my $col_values = [map {$_->[$i]} @$dataset];
-    #         $means->[$i] = sum(@$col_values) / scalar(@$dataset);
-    #     }
-    #     return $means;
-    # }
-
-    # # Function To Calculate Standard Deviations For Each Column in a Dataset.
-    # # Calculate column standard deviations
-    # sub column_stdevs{
-    #     my ($self, $dataset, $means) = @_;
-    #     my $stdevs = [0, map {$_} 0 .. $#{$dataset->[0]} -1];
-    #     for my $i (0 .. $#{$dataset->[0]}){
-    #         my $variance = [map {($_->[$i] - $means->[$i]) ** 2} @$dataset];
-    #         $stdevs->[$i] = sum(@$variance);
-    #     }
-    #     $stdevs = [map {sqrt($_ / (scalar(@$dataset) -1))} @$stdevs];
-    #     return $stdevs;
-    # }
-    
-    # sub standardize_dataset{
-    #     my ($self, $X, $means, $stdevs) = @_;
-    #         for my $row (@$X){
-    #             for my $i (0 .. $#$row){
-    #                 $row->[$i] = ($row->[$i] - $means->[$i]) / $stdevs->[$i];
-    #             }
-    #         }
-    # }
-
-    # sub train_test_split{
-    #     my ($self, $dataset, %args) = (splice (@_, 0, 2), split=>0.6, @_);
-    #     my $train_size = int($args{split} * @$dataset);
-    #     my @idx = shuffle (0 .. $#$dataset);
-    #     my @train_idx = @idx[0 .. $train_size -1];
-    #     my @test_idx = @idx[$train_size .. $#$dataset];
-    #     my @train = @$dataset[@train_idx];
-    #     my @test = @$dataset[@test_idx];
-    #     return \@train, \@test;
-    # }
-
-    # sub cross_validation_split{
-    #     my ($self, $dataset, %args) = (splice (@_, 0, 2), n_folds=>10, @_);
-    #     my @dataset_split;
-    #     my $fold_size = int(@$dataset / $args{n_folds});
-    #     my @idx = shuffle (0 .. $#$dataset);
-    #     for my $i (0 .. $args{n_folds} -1){
-    #         my @fold_idx = @idx[$i * $fold_size .. ($i +1) * $fold_size -1];
-    #         push @dataset_split, [@$dataset[@fold_idx]];
-    #     }
-    #     return \@dataset_split;
-    # }
-
-
-    # sub count_labels{
-    #     my ($self, $dataset) = @_;
-    #     my %counts = ();
-    #     map {$counts{"$_->[-1]"}++} @$dataset;
-    #     return \%counts;
-    # }
-
-    sub dataset_minmax {
+    sub dataset_minmax{
         my ($self, $dataset) = @_;
-        my $min = $dataset->min(axis => 0);
-        my $max = $dataset->max(axis => 0);
-        return mx->nd->stack($min, $max, axis => 1);
+        return mx->nd->stack($dataset->min(axis=>0), $dataset->max(axis=>0))->transpose;
     }
 
 
 
     sub normalize_dataset {
         my ($self, $dataset, $minmax) = @_;
-        
-        # Extraemos y forzamos la materialización como NDArray independientes
-        my $min = $minmax->slice(':', 0)->copy();
-        my $max = $minmax->slice(':', 1)->copy();
-        
-        # Calculamos el rango
-        my $range = ($max - $min);
-        
-        # Para evitar divisiones por cero en columnas constantes
-        $range .= 1e-10 if $range->min->asscalar == 0;
-        
-        # Realizamos la operación in-place sobre el dataset original
-        $dataset .= ($dataset - $min) / $range;
+        my ($min, $max) = @{$minmax->transpose};
+        return ($dataset - $min) / ($max - $min);
     }
 
 
 
-    sub column_means {
+    sub column_means{
         my ($self, $dataset) = @_;
-        return mx->nd->mean($dataset, axis => 0);
+        return $dataset->mean(axis=>0);
     }
 
-    sub column_stdevs {
+
+
+    sub column_stdevs{
         my ($self, $dataset, $means) = @_;
-        my $n = $dataset->shape->[0];
-        my $diff = $dataset - $means;
-        return mx->nd->sqrt($diff->power(2)->sum(axis => 0) / ($n - 1));
+        return mx->nd->sqrt(($dataset - $means)->power(2)->sum(axis=>0) / ($dataset->len - 1));
     }
 
-    sub standardize_dataset {
+
+    sub standardize_dataset{
         my ($self, $dataset, $means, $stdevs) = @_;
-        $dataset .= ($dataset - $means) / $stdevs;
+        return ($dataset - $means) / $stdevs;
     }
 
 
