@@ -2,7 +2,7 @@ use strict;
 use warnings; 
 use Data::Dump qw(dump);
 use AI::MXNet qw(mx);
-use sml;
+use sml; 
 use Chart::Plotly qw(show_plot);
 
 my ($dataset, $header) = sml->load_csv('data/iris.csv');
@@ -230,7 +230,7 @@ $layout = {
 };
 
 $plot = new Chart::Plotly::Plot(traces => [$trace], layout => $layout);
-#show_plot($plot);
+show_plot($plot);
 
 my $filename = 'data/pima-indians-diabetes.csv';
 ($dataset, $header) = sml->load_csv($filename, asndarray=>1);
@@ -243,7 +243,7 @@ $normalized = mx->nd->concat($X_normalized, $y->expand_dims(axis=>1));
 printf "Normalized:%s", $normalized->asstr;
 
 $corrcoef_normalized = mx->nd->corrcoef($normalized->transpose());
-printf "Pearson Correlation coefficients of the Diabetes dataset: %s\n",
+printf "Pearson Correlation coefficients of the Diabetes dataset: \n Normalized\n %s\n", 
 $corrcoef_normalized->asstr;
 
 #standardize
@@ -255,7 +255,7 @@ my $standardized = mx->nd->concat($X_standardized, $y->expand_dims(axis=>1));
 print $standardized->asstr;
 
 my $corrcoef_standardized = mx->nd->corrcoef($standardized->transpose());
-printf "Pearson Correlation coefficients of the Diabetes dataset: %s\n",
+printf "Pearson Correlation coefficients of the Diabetes dataset: \n Standarized \n %s\n",
 $corrcoef_standardized->asstr;
 
 printf "%d-%s ", $_, $header->[$_] for (0 .. $#$header);

@@ -1,132 +1,189 @@
-package Algorithm::Viterbi{
+#Estudiante: Juan Chugá
+#Paralelo: GR1SW
+#Fecha: 01/06/2024
 
-    use strict;
-    use warnings;
-    use Data::Dump qw(dump);
-    use AI::MXNet qw(mx);
+package Viterbi{
+use strict;
+use warnings;
+use Data::Dump qw(dump);
+use List::Util qw(reduce);
+sub new{
+my ($class, %args) = (shift, states => [], observables => [], @_);
+my $self = {
+states => $args{states},
+observables => $args{observables},
+};
+return bless $self, $class;
+}
+# Initializes the start probabilities.
+# The start probabilities are passed as a reference to a hash.
+sub start{
+my ($self, $start) = @_;
+return $self->{start} = $start;
+}
+# Initializes the emission probabilities.
+# The emissions are passed as a reference to a hash.
+sub emissions{
+my ($self, $emissions) = @_;
+return $self->{emissions} = $emissions;
+}
+# Initializes the transition probabilities.
+# The transitions are passed as a reference to a hash.
+sub transitions{
+my ($self, $transitions) = @_;
+return $self->{transitions} = $transitions;
+}
+# Returns the emission probability for a given observation and state.
+sub get_emission{
+my ($self, $observation, $hidden) = @_;
+my $e = 0;
+if (defined($self->{emissions}{$observation})){
+if (defined($self->{emissions}{$observation}{$hidden})){
+$e = $self->{emissions}{$observation}{$hidden};
+}
+else {
+# observation exists, but not for this hidden state
+$e = 0;
+}
+}
+else {
+if (defined($self->{unknown_emission_prob})){
+$e = $self->{unknown_emission_prob};
+}
+else {
+$e = $self->{start}{$hidden};
+}
+}
+return $e;
+}
+# Returns the transition probability between a state and the next state.
+sub get_transition{
+my ($self, $hidden, $next_hidden) = @_;
 
-    sub new{
-        my ($class, %args) = (shift, states => [], observables => [], @_); 
-        my $self = {
-                    states      => $args{states},
-                    observables => $args{observables},
-                    };
-        return bless $self, $class;
-    }
-
-    sub get_start_probs{ 
-        my ($self, $training_data, $start_probs) = @_; 
-        return $self->{start} if defined $self->{start}; 
-    } 
-
-    sub set_start{
-        my ($self, $start) = @_;
-        return $self->{start} = $start;
-    }
-
-    sub set_emissions{
-        my ($self, $emissions) = @_;
-        return $self->{emissions} = $emissions;
-    }
-
-    sub set_transitions{
-        my ($self, $transitions) = @_;
-        return $self->{transitions} = $transitions;
-    }
-
-
-    sub viterbi{
-        my ($self, $observations, %args) = (splice(@_, 0, 2), debug=>0, log=>0, @_);
-        my $A  = $self->{transitions}->copy();
-        my $B  = $self->{emissions}->copy();
-        my $pi = $self->get_start_probs()->copy();
-
-        if ($args{log}) {
-            my $tiny = 1e-32;
-            $A  = mx->nd->log($A  + $tiny);
-            $B  = mx->nd->log($B  + $tiny);
-            $pi = mx->nd->log($pi + $tiny);
-        }
-        
-        my $I = $A->len;
-        my $N = $observations->len;
-
-        my $D = mx->nd->zeros([$I, $N]);
-        my $E = mx->nd->zeros([$I, $N-1]);
-
-        my $obs = $observations->slice(0)->asscalar;
-        my $b0 =  $B->slice(':', $obs);
-        $D->slice(':',0)->set(($args{log} ? $pi + $b0: $pi * $b0)->expand_dims(axis=>1));
-
-
-        for my $n (1..$N-1){
-            $obs = $observations->slice($n)->asscalar;
-            my $prev = $D->slice(':', [$n-1, $n]);
-            my $temp = $args{log} ? $prev + $A: $prev * $A;
-            my $max_vals = $temp->max(axis=>0);
-            my $argmaxes = $temp->argmax(axis=>0);
-            my $emit = $B->slice(':',$obs);
-            $D->slice(':', $n)->set(($args{log} ? $max_vals + $emit: $max_vals * $emit)->expand_dims(axis=>1));
-            $E->slice(':', $n-1)->set(($argmaxes)->expand_dims(axis=>1));
-        }
-
-        my $S_opt = mx->nd->zeros([$N]);
-        $S_opt->slice($N-1)->set($D->slice(':', $N-1)->argmax);
-        for my $n (reverse 0 .. $N-2){
-            my $next_state = $S_opt->slice($n+1)->asscalar;
-            $S_opt->slice($n)->set( mx->nd->array([$E->slice($next_state, $n)->asscalar]));
-        }
-        
-        $D = mx->nd->exp($D) if $args{log};
-
-        return ($S_opt, $D, $E);
-    }
-    1;
+my $t = defined($self->{transitions}{$hidden}{$next_hidden})
+? $self->{transitions}{$hidden}{$next_hidden}
+: $self->{unknown_transition_prob};
+return $t;
 }
 
-    use strict;
-    use warnings;
-    use Data::Dump qw(dump);
-    use AI::MXNet qw(mx);
+sub viterbi {
+my ($self, $observations) = @_;
+#Inicializacion
+my $states = $self->{states};
+my ($T1, $T2);
 
-sub print_result {
-    my ($O, $S_opt, $D, $E) = @_;
-    print "1. Secuencia de Observaciones (O):\n";
-    print $O->aspdl;
-    print "\n";
+my $first_observation = $observations->[0];
+for my $state (@$states) {
+$T1->{$state}[0] = $self->{start}{$state} * $self->get_emission($first_observation, $state);
+$T2->{$state}[0] = undef;
+}
+#Recursion
+for my $t (1 .. $#$observations) {
+my $observation = $observations->[$t];
+for my $next_state (@$states) {
+my $max_prob = 0;
+my $argmax = undef;
+my $emission_prob = $self->get_emission($observation, $next_state);
 
-    print "2. Camino Óptimo de Estados Ocultos (S_opt):\n";
-    print $S_opt->aspdl;
-    print "\n";
+for my $state (@$states) {
+my $previous_prob = $T1->{$state}[$t - 1];
+my $transition_prob = $self->get_transition($state, $next_state);
+my $candidate_prob = $previous_prob * $transition_prob * $emission_prob;
 
-    print "3. Matriz de Probabilidades (D):\n";
-    print $D->aspdl;
-    print "\n";
-
-    print "4. Matriz de Punteros de Retroceso (E):\n";
-    print $E->aspdl;
-    print "\n";
+if ($candidate_prob > $max_prob) {
+$max_prob = $candidate_prob;
+$argmax = $state;
+}
 }
 
-# Código de prueba:
-
-sub print_tensors{
-  printf "type: %s shape:%s%s\n", ref($_), dump($_->shape), $_->aspdl for (@_);
+$T1->{$next_state}[$t] = $max_prob;
+$T2->{$next_state}[$t] = $argmax;
 }
-my $vit = new Algorithm::Viterbi(states=>[0, 1], observables=>[10, 11, 12]); 
+}
+#Finalizacion
+my $last_t = $#$observations;
+my $best_prob = 0;
+my $best_state = undef;
+for my $state (@$states) {
+if (($T1->{$state}[$last_t]) > $best_prob) {
+$best_prob = $T1->{$state}[$last_t];
+$best_state = $state;
+}
+}
+#Backtracking
+my @path;
+$path[$last_t] = $best_state;
+for (my $t = $last_t; $t > 0; $t--) {
+$path[$t - 1] = $T2->{$path[$t]}[$t];
+}
 
-my $A = mx->nd->array([ 
-    [0.7, 0.3], 
-    [0.4, 0.6], 
-]); 
-my $B = mx->nd->array([ 
-    [1.0, 0.0, 0.0], 
-    [0.2, 0.3, 0.5], 
-]); 
-my $pi = mx->nd->array([4/7, 3/7]); 
-my $O = mx->nd->array([0, 2, 0]); 
-$vit->set_transitions($A); 
-$vit->set_emissions($B); 
-$vit->set_start($pi); 
-my ($S_opt, $D, $E) = $vit->viterbi($O, log=>0, order=>1); 
-print_tensors($O, $S_opt, $D, $E); 
+return (\@path, $best_prob);
+}
+1;
+}
+
+#Codigo de test
+use strict;
+use warnings;
+use Data::Dump qw(dump);
+my $start = { 'Sunny'=> 4/7, 'Rainy'=> 3/7 };
+my $transitions = {
+'Sunny' => {'Sunny'=> 0.7, 'Rainy'=> 0.3},
+'Rainy' => {'Sunny'=> 0.4, 'Rainy'=> 0.6},
+};
+
+my $emissions = {
+'walk' => {
+'Sunny' => 1,
+'Rainy' => 0.2
+},
+'shop' => {
+'Sunny' => 0,
+'Rainy' => 0.3,
+},
+'clean' => {
+'Sunny' => 0,
+'Rainy' => 0.5
+}
+};
+my $observations = [ 'clean', 'walk', 'shop' ];
+my $v = new Viterbi(states=>['Sunny', 'Rainy'], observables=>['walk', 'shop', 'clean']);
+$v->transitions($transitions);
+$v->emissions($emissions);
+$v->start($start);
+my ($viterbi_path, $viterbi_prob) = $v->viterbi($observations);
+
+printf "observations: %s\n", join(' → ', @$observations);
+printf "viterbi_path: %s\n", join(' → ', @$viterbi_path);
+printf "viterbi_prob: %s\n\n", substr($viterbi_prob, 0, 7);
+
+#Codigo de la pagina 9
+my $observations_set = [
+['shop', 'shop', 'shop'],
+['shop', 'shop', 'clean'],
+['shop', 'shop', 'walk'],
+['shop', 'clean', 'clean'],
+['shop', 'clean', 'walk'],
+['shop', 'walk', 'shop'],
+['shop', 'walk', 'clean'],
+['shop', 'walk', 'walk'],
+['clean', 'clean', 'clean'],
+['clean', 'clean', 'walk'],
+['clean', 'walk', 'clean'],
+['clean', 'walk', 'walk'],
+['walk', 'shop', 'shop'],
+['walk', 'shop', 'clean'],
+['walk', 'shop', 'walk'],
+['walk', 'clean', 'clean'],
+['walk', 'clean', 'walk'],
+['walk', 'walk', 'shop'],
+['walk', 'walk', 'clean'],
+['walk', 'walk', 'walk']
+];
+
+while (my ($i, $obs) = each @$observations_set){
+my ($viterbi_path, $viterbi_prob) = $v->viterbi($obs);
+printf "%d -> observations: %s\n", $i + 1, join(' → ', @$obs);
+printf "viterbi_path: %s\n", join(' → ', @$viterbi_path);
+printf "viterbi_prob: %s\n\n", substr($viterbi_prob, 0, 7);
+}
